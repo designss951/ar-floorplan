@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>AR Floor Plan Viewer</title>
+
+  <!-- MindAR + A-Frame (image tracking) -->
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; }
+
+    /* ── Loading / splash overlay ── */
+    #overlay {
+      position: fixed; inset: 0; z-index: 1000;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: linear-gradient(135deg, #0a0a0f 0%, #1a1a2e 50%, #0a0a0f 100%);
+      color: #e0e0e0;
+      transition: opacity .6s ease;
+    }
+    #overlay.hidden { opacity: 0; pointer-events: none; }
+
+    #overlay h1 {
+      font-size: 1.6rem; font-weight: 700; letter-spacing: .04em;
+      margin-bottom: .3rem; color: #fff;
+    }
+    #overlay p.sub {
+      font-size: .85rem; opacity: .6; margin-bottom: 2rem;
+    }
+
+    .spinner {
+      width: 48px; height: 48px; border-radius: 50%;
+      border: 3px solid rgba(255,255,255,.12);
+      border-top-color: #6ee7b7;
+      animation: spin .8s linear infinite;
+      margin-bottom: 1.4rem;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #status {
+      font-size: .9rem; opacity: .8;
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes pulse { 50% { opacity: .4; } }
+
+    /* ── Instructions card (shown once tracking starts) ── */
+    #instructions {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      z-index: 900;
+      background: rgba(10,10,18,.82);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 16px;
+      padding: 14px 22px;
+      color: #fff; font-size: .82rem;
+      text-align: center; max-width: 340px;
+      opacity: 0; transition: opacity .5s ease;
+      pointer-events: none;
+    }
+    #instructions.show { opacity: 1; pointer-events: auto; }
+    #instructions strong { color: #6ee7b7; }
+
+    /* ── Controls ── */
+    #controls {
+      position: fixed; top: 16px; right: 16px; z-index: 900;
+      display: flex; flex-direction: column; gap: 8px;
+      opacity: 0; transition: opacity .5s ease;
+    }
+    #controls.show { opacity: 1; }
+    #controls button {
+      width: 44px; height: 44px; border-radius: 12px;
+      border: 1px solid rgba(255,255,255,.12);
+      background: rgba(10,10,18,.75);
+      backdrop-filter: blur(10px);
+      color: #fff; font-size: 1.1rem;
+      cursor: pointer; display: flex;
+      align-items: center; justify-content: center;
+      transition: background .2s;
+    }
+    #controls button:active { background: rgba(110,231,183,.25); }
+
+    /* ── Tracking indicator ── */
+    #tracking-badge {
+      position: fixed; top: 16px; left: 16px; z-index: 900;
+      padding: 6px 14px; border-radius: 20px;
+      font-size: .75rem; font-weight: 600; letter-spacing: .03em;
+      display: flex; align-items: center; gap: 6px;
+      background: rgba(10,10,18,.75);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,.08);
+      color: #aaa;
+      opacity: 0; transition: opacity .5s ease;
+    }
+    #tracking-badge.show { opacity: 1; }
+    #tracking-badge .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #ef4444;
+      transition: background .3s;
+    }
+    #tracking-badge.tracking .dot { background: #6ee7b7; }
+    #tracking-badge.tracking { color: #6ee7b7; }
+  </style>
+</head>
+<body>
+
+  <!-- ── Loading overlay ── -->
+  <div id="overlay">
+    <div class="spinner"></div>
+    <h1>AR Floor Plan</h1>
+    <p class="sub">Augmented Reality Viewer</p>
+    <div id="status">Initialising camera…</div>
+  </div>
+
+  <!-- ── HUD elements ── -->
+  <div id="tracking-badge"><span class="dot"></span><span id="badge-text">Searching…</span></div>
+  <div id="controls">
+    <button id="btn-scale-up" title="Scale up">＋</button>
+    <button id="btn-scale-dn" title="Scale down">－</button>
+    <button id="btn-reset" title="Reset">↺</button>
+  </div>
+  <div id="instructions">
+    Point your camera at the <strong>printed floor plan marker</strong> on or near the projection. The 3D model will anchor to it automatically.
+  </div>
+
+  <!-- ══════════════════════════════════════════════
+       A-Frame scene – MindAR image tracking
+       ══════════════════════════════════════════════ -->
+  <a-scene
+    mindar-image="imageTargetSrc: ./targets.mind; autoStart: true; uiLoading: no; uiScanning: no; uiError: no; filterMinCF: 0.001; filterBeta: 1000; missTolerance: 5; warmupTolerance: 5;"
+    color-space="sRGB"
+    embedded
+    renderer="colorManagement: true; physicallyCorrectLights: true; antialias: true;"
+    vr-mode-ui="enabled: false"
+    device-orientation-permission-ui="enabled: false"
+  >
+    <!-- Camera -->
+    <a-camera position="0 0 0" look-controls="enabled: false" cursor="fuse: false; rayOrigin: mouse;"></a-camera>
+
+    <!-- Target anchor (index 0 of targets.mind) -->
+    <a-entity mindar-image-target="targetIndex: 0">
+      <!-- 3D model – adjust position / rotation / scale to taste -->
+      <a-gltf-model
+        id="ar-model"
+        src="./model.glb"
+        position="0 0 0"
+        rotation="0 0 0"
+        scale="0.15 0.15 0.15"
+        animation="property: rotation; to: 0 0 0; loop: false; dur: 1;"
+      ></a-gltf-model>
+    </a-entity>
+  </a-scene>
+
+  <!-- ══════════════════════════════════════════════
+       App logic
+       ══════════════════════════════════════════════ -->
+  <script>
+    const overlay      = document.getElementById('overlay');
+    const status       = document.getElementById('status');
+    const instructions = document.getElementById('instructions');
+    const controls     = document.getElementById('controls');
+    const badge        = document.getElementById('tracking-badge');
+    const badgeText    = document.getElementById('badge-text');
+    const model        = document.getElementById('ar-model');
+
+    let currentScale = 0.15;          // starting scale
+    const SCALE_STEP = 0.02;
+
+    /* ── Scene ready ── */
+    const scene = document.querySelector('a-scene');
+
+    scene.addEventListener('arReady', () => {
+      status.textContent = 'Camera ready — point at marker';
+    });
+
+    scene.addEventListener('renderstart', () => {
+      // hide loading splash after a short grace period
+      setTimeout(() => {
+        overlay.classList.add('hidden');
+        instructions.classList.add('show');
+        controls.classList.add('show');
+        badge.classList.add('show');
+      }, 1200);
+    });
+
+    /* ── Tracking events ── */
+    const target = document.querySelector('[mindar-image-target]');
+
+    target.addEventListener('targetFound', () => {
+      badge.classList.add('tracking');
+      badgeText.textContent = 'Tracking';
+      instructions.classList.remove('show');   // hide tip once locked
+    });
+
+    target.addEventListener('targetLost', () => {
+      badge.classList.remove('tracking');
+      badgeText.textContent = 'Searching…';
+      instructions.classList.add('show');
+    });
+
+    /* ── Scale controls ── */
+    document.getElementById('btn-scale-up').addEventListener('click', () => {
+      currentScale = Math.min(currentScale + SCALE_STEP, 2);
+      model.setAttribute('scale', `${currentScale} ${currentScale} ${currentScale}`);
+    });
+    document.getElementById('btn-scale-dn').addEventListener('click', () => {
+      currentScale = Math.max(currentScale - SCALE_STEP, 0.01);
+      model.setAttribute('scale', `${currentScale} ${currentScale} ${currentScale}`);
+    });
+    document.getElementById('btn-reset').addEventListener('click', () => {
+      currentScale = 0.15;
+      model.setAttribute('scale', '0.15 0.15 0.15');
+      model.setAttribute('position', '0 0 0');
+      model.setAttribute('rotation', '0 0 0');
+    });
+
+    /* ── Error fallback ── */
+    scene.addEventListener('arError', () => {
+      status.textContent = '⚠ Camera access denied — please allow camera permission and reload.';
+    });
+  </script>
+</body>
+</html>
